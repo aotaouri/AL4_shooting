@@ -164,10 +164,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CameraController.cpp" />
+    <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="GameScene.cpp" />
+    <ClCompile Include="Item.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MyMath.cpp" />
     <ClCompile Include="Player.cpp" />
+    <ClCompile Include="PlayerBullet.cpp" />
+    <ClCompile Include="Stage.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Resources\shaders\TerrainPS.hlsl">
@@ -268,9 +272,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CameraController.h" />
+    <ClInclude Include="Enemy.h" />
     <ClInclude Include="GameScene.h" />
+    <ClInclude Include="Item.h" />
     <ClInclude Include="MyMath.h" />
     <ClInclude Include="Player.h" />
+    <ClInclude Include="PlayerBullet.h" />
+    <ClInclude Include="Stage.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

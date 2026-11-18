@@ -76,3 +76,47 @@ void UpdateWorldTransform(WorldTransform& worldTransform) {
 	worldTransform.matWorld_ = worldMatrix;
 	worldTransform.TransferMatrix();
 }
+
+Vector2 WorldToScreen(const Vector3& worldPos, const Matrix4x4& viewProjection, float screenWidth, float screenHeight) {
+	// ワールド座標を透視除算済みの NDC へ変換する
+	Vector3 ndc = TransformToNDC(worldPos, viewProjection);
+
+	// 画面左上を (0,0) とするピクセル座標へ変換する
+	float screenX = (ndc.x + 1.0f) * 0.5f * screenWidth;
+	float screenY = (1.0f - ndc.y) * 0.5f * screenHeight; // Y軸を反転
+
+	return Vector2{screenX, screenY};
+}
+
+Vector3 TransformToNDC(const Vector3& v, const Matrix4x4& m, float* outW) {
+	// 行ベクトル方式:[x y z 1] * M
+	float x = v.x * m.m[0][0] + v.y * m.m[1][0] + v.z * m.m[2][0] + m.m[3][0];
+	float y = v.x * m.m[0][1] + v.y * m.m[1][1] + v.z * m.m[2][1] + m.m[3][1];
+	float z = v.x * m.m[0][2] + v.y * m.m[1][2] + v.z * m.m[2][2] + m.m[3][2];
+	float w = v.x * m.m[0][3] + v.y * m.m[1][3] + v.z * m.m[2][3] + m.m[3][3];
+
+	if (outW) {
+		*outW = w;
+	}
+
+	// w で割って NDC にする(w が 0 に近いときは割らない)
+	if (std::abs(w) > 0.00001f) {
+		x /= w;
+		y /= w;
+		z /= w;
+	}
+	return {x, y, z};
+}
+
+bool IsInsideScreen(const Vector3& worldPos, const Matrix4x4& viewProjection) {
+	float w = 0.0f;
+	Vector3 ndc = TransformToNDC(worldPos, viewProjection, &w);
+
+	// カメラの後ろにある点は画面外
+	if (w <= 0.0f) {
+		return false;
+	}
+
+	// NDC は X・Y が -1〜1、Z が 0〜1(DirectX)の範囲なら画面内
+	return ndc.x >= -1.0f && ndc.x <= 1.0f && ndc.y >= -1.0f && ndc.y <= 1.0f && ndc.z >= 0.0f && ndc.z <= 1.0f;
+}
