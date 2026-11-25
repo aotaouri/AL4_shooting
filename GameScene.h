@@ -4,8 +4,6 @@
 #include <optional>
 #include <random>
 
-
-
 using namespace KamataEngine;
 
 class Player;
@@ -38,6 +36,9 @@ private:
 
 	// スコアスプライトの更新(届いたらスコア加算)
 	void UpdateScoreSprite(ScoreSprite& sprite);
+
+	// 敵同士の重なりを解消する
+	void SeparateEnemies();
 
 	// 画面外のスポーン位置を探す
 	std::optional<Vector3> FindSpawnPosition(const Vector3& playerPosition, const Matrix4x4& viewProjection);
@@ -78,9 +79,9 @@ private:
 	// スポーンまでのカウンタ
 	int spawnTimer_ = 0;
 	// スポーン間隔
-	static inline const int kSpawnInterval = 120;
+	static inline const int kSpawnInterval = 40;
 	// 同時に存在できる敵の最大数
-	static inline const size_t kMaxEnemies = 10;
+	static inline const size_t kMaxEnemies = 40;
 
 	// 取得した数(2D演出やスコアに使う想定)
 	int collectedCount_ = 0;

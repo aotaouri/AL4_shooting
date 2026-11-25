@@ -1,6 +1,7 @@
 #include "Player.h"
 #include "MyMath.h"
 #include "PlayerBullet.h"
+#include "Stage.h"
 #include <cmath>
 
 using namespace KamataEngine;
@@ -45,22 +46,11 @@ void Player::Update() {
 		direction.x -= 1.0f;
 	}
 
-		// 斜め移動が速くならないよう正規化する
+	// 斜め移動が速くならないよう正規化する
 	float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
 	if (length > 0.0f) {
 		direction.x /= length;
 		direction.z /= length;
-
-		aimDirection_ = direction;
-
-		// 移動方向へ滑らかに向く(追加)
-		float targetAngle = std::atan2(direction.x, direction.z);
-
-		// 角度の差を -π〜π に収める(遠回りして回るのを防ぐ)
-		float diff = std::remainder(targetAngle - worldTransform_.rotation_.y, 2.0f * 3.1415926535f);
-
-		// 差の20%ずつ近づける(1.0fにすると一瞬で向く)
-		worldTransform_.rotation_.y += diff * 0.2f;
 	}
 
 	// 速度を求めて座標に加算
@@ -71,8 +61,8 @@ void Player::Update() {
 	worldTransform_.translation_.x += velocity_.x;
 	worldTransform_.translation_.z += velocity_.z;
 
-	// スペースキーで弾を撃つ
-	if (input->TriggerKey(DIK_SPACE)) {
+	// 左クリックで弾を撃つ
+	if (input->IsTriggerMouse(0)) {
 		Attack();
 	}
 
@@ -105,6 +95,56 @@ void Player::Attack() {
 	bullets_.push_back(newBullet);
 }
 
+//プレイヤーの弾の当たり判定
+bool Player::HitBullet(const Vector3& enemyPos, float enemyRadius) {
+
+	// 弾の半径(モデルの大きさに合わせて調整)
+	constexpr float kBulletRadius = 0.3f;
+	const float hitDist = enemyRadius + kBulletRadius;
+
+	for (auto it = bullets_.begin(); it != bullets_.end(); ++it) {
+		const Vector3& bp = (*it)->GetPosition();
+		float diffX = bp.x - enemyPos.x;
+		float diffZ = bp.z - enemyPos.z;
+
+		if (diffX * diffX + diffZ * diffZ <= hitDist * hitDist) {
+			delete *it;
+			bullets_.erase(it); // 1発の弾は1体まで
+			return true;
+		}
+	}
+	return false;
+}
+
+void Player::RefreshTransform() {
+	UpdateWorldTransform(worldTransform_); 
+}
+
+void Player::RemoveBulletsHitWall(const Stage& stage) {
+
+	bullets_.remove_if([&stage](PlayerBullet* bullet) {
+		if (stage.IsWallAt(bullet->GetPosition())) {
+			delete bullet;
+			return true;
+		}
+		return false;
+	});
+}
+
+void Player::LookAt(const Vector3& target) {
+
+	float diffX = target.x - worldTransform_.translation_.x;
+	float diffZ = target.z - worldTransform_.translation_.z;
+	float length = std::sqrt(diffX * diffX + diffZ * diffZ);
+
+	// マウスがプレイヤーの真上にあるときは向きを変えない
+	if (length < 0.001f) {
+		return;
+	}
+
+	aimDirection_ = {diffX / length, 0.0f, diffZ / length};
+	worldTransform_.rotation_.y = std::atan2(diffX, diffZ);
+}
 
 void Player::Draw() {
 

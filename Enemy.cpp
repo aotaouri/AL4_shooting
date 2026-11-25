@@ -30,27 +30,37 @@ bool Enemy::CanDetectPlayer(const Vector3& enemyPos, const Vector3& playerPos, f
 
 void Enemy::Update(const Vector3& playerPos, const Matrix4x4& viewProjection, const Stage& stage) {
 
-	// 軽い判定から順に行う(画面内 → 距離 → 壁に遮られていないか)
-	bool onScreen = IsInsideScreen(worldTransform_.translation_, viewProjection);
-	isChasing_ = onScreen && CanDetectPlayer(worldTransform_.translation_, playerPos, kDetectRange) && stage.HasLineOfSight(worldTransform_.translation_, playerPos);
+	// 気づく条件(画面内 → 距離 → 視線)。一度気づいたら追い続ける
+	if (!hasNoticed_) {
+		bool onScreen = IsInsideScreen(worldTransform_.translation_, viewProjection);
+		hasNoticed_ = onScreen && CanDetectPlayer(worldTransform_.translation_, playerPos, kDetectRange) && stage.HasLineOfSight(worldTransform_.translation_, playerPos);
+	}
+	isChasing_ = hasNoticed_;
 
 	if (isChasing_) {
-		// プレイヤーへの方向を求める
-		float diffX = playerPos.x - worldTransform_.translation_.x;
-		float diffZ = playerPos.z - worldTransform_.translation_.z;
-		float length = std::sqrt(diffX * diffX + diffZ * diffZ);
-
-		// 重なっているとき(長さ0)は割らない
-		if (length > 0.0001f) {
-			worldTransform_.translation_.x += diffX / length * kMoveSpeed;
-			worldTransform_.translation_.z += diffZ / length * kMoveSpeed;
-
-			// 進行方向を向く(Y軸回転)
-			worldTransform_.rotation_.y = std::atan2(diffX, diffZ);
+		Vector3 dir;
+		if (stage.GetFlowDirection(worldTransform_.translation_, &dir)) {
+			// 自分のいるマスのベクトルを参照して進むだけ
+			worldTransform_.translation_.x += dir.x * kMoveSpeed;
+			worldTransform_.translation_.z += dir.z * kMoveSpeed;
+			worldTransform_.rotation_.y = std::atan2(dir.x, dir.z);
+		} else if (stage.HasLineOfSight(worldTransform_.translation_, playerPos)) {
+			float diffX = playerPos.x - worldTransform_.translation_.x;
+			float diffZ = playerPos.z - worldTransform_.translation_.z;
+			float length = std::sqrt(diffX * diffX + diffZ * diffZ);
+			if (length > 0.0001f) {
+				worldTransform_.translation_.x += diffX / length * kMoveSpeed;
+				worldTransform_.translation_.z += diffZ / length * kMoveSpeed;
+				worldTransform_.rotation_.y = std::atan2(diffX, diffZ);
+			}
 		}
+		// 壁にめり込んだ分を押し戻す(追加)
+		worldTransform_.translation_ = stage.ResolveCollision(worldTransform_.translation_, kRadius);
 	}
 
 	UpdateWorldTransform(worldTransform_);
 }
+
+void Enemy::RefreshTransform() { UpdateWorldTransform(worldTransform_); }
 
 void Enemy::Draw() { model_->Draw(worldTransform_, *camera_); }

@@ -120,3 +120,40 @@ bool IsInsideScreen(const Vector3& worldPos, const Matrix4x4& viewProjection) {
 	// NDC は X・Y が -1〜1、Z が 0〜1(DirectX)の範囲なら画面内
 	return ndc.x >= -1.0f && ndc.x <= 1.0f && ndc.y >= -1.0f && ndc.y <= 1.0f && ndc.z >= 0.0f && ndc.z <= 1.0f;
 }
+
+bool ScreenToGround(const Vector2& screenPos, const Matrix4x4& view, const Matrix4x4& projection, float screenWidth, float screenHeight, float groundY, Vector3* out) {
+
+	// 画面座標 → NDC(WorldToScreen の逆)
+	float ndcX = screenPos.x / screenWidth * 2.0f - 1.0f;
+	float ndcY = 1.0f - screenPos.y / screenHeight * 2.0f;
+
+	// ビュー空間でのレイの向き(透視投影の前提:z = 1 のときの x, y)
+	float vx = ndcX / projection.m[0][0];
+	float vy = ndcY / projection.m[1][1];
+	float vz = 1.0f;
+
+	// ビュー行列(回転 R と平行移動 t)の逆変換:world = (view空間 - t) * R^T
+	auto toWorld = [&](float x, float y, float z) {
+		x -= view.m[3][0];
+		y -= view.m[3][1];
+		z -= view.m[3][2];
+		return Vector3{x * view.m[0][0] + y * view.m[0][1] + z * view.m[0][2], x * view.m[1][0] + y * view.m[1][1] + z * view.m[1][2], x * view.m[2][0] + y * view.m[2][1] + z * view.m[2][2]};
+	};
+
+	// レイの始点(カメラ位置)と、向きの先の点
+	Vector3 origin = toWorld(0.0f, 0.0f, 0.0f);
+	Vector3 pointOnRay = toWorld(vx, vy, vz);
+	Vector3 dir = {pointOnRay.x - origin.x, pointOnRay.y - origin.y, pointOnRay.z - origin.z};
+
+	// 地面に向かっていないレイは交点なし
+	if (std::abs(dir.y) < 0.00001f) {
+		return false;
+	}
+	float t = (groundY - origin.y) / dir.y;
+	if (t <= 0.0f) {
+		return false;
+	}
+
+	*out = {origin.x + dir.x * t, groundY, origin.z + dir.z * t};
+	return true;
+}

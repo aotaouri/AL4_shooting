@@ -42,7 +42,7 @@ void GameScene::Initialize() {
 	// 壁
 	modelWall_ = KamataEngine::Model::CreateFromOBJ("cube", true);
 	stage_ = new Stage();
-	stage_->Initialize(modelWall_, camera_);
+	stage_->Initialize(modelWall_, camera_, randomEngine_);
 
 	// 自キャラの生成と初期化
 	player_ = new Player();
@@ -56,8 +56,29 @@ void GameScene::Initialize() {
 
 void GameScene::Update() {
 
+	// マウスが指している地面の位置を求めて、そちらを向く(Update より先に行う)
+	Vector2 mousePos = Input::GetInstance()->GetMousePosition();
+	Vector3 mouseTarget;
+	if (ScreenToGround(mousePos, camera_->matView, camera_->matProjection, (float)WinApp::kWindowWidth, (float)WinApp::kWindowHeight, player_->GetWorldTransform().translation_.y, &mouseTarget)) {
+		player_->LookAt(mouseTarget);
+	}
+
 	// 自キャラの更新
 	player_->Update();
+
+
+	// 壁に触れた弾を消す
+	player_->RemoveBulletsHitWall(*stage_);
+
+	// 壁との衝突を解決して、押し戻した座標を反映する
+	Vector3 resolved = stage_->ResolveCollision(player_->GetWorldTransform().translation_, Player::kRadius);
+
+	// マップの外へ出ないようにする(追加)
+	resolved = stage_->ClampToMap(resolved, Player::kRadius);
+
+	player_->SetPosition(resolved);
+	player_->RefreshTransform();
+
 	// カメラの追従(プレイヤー更新後に行う)
 	cameraController_->Update();
 
@@ -65,9 +86,29 @@ void GameScene::Update() {
 	Matrix4x4 viewProjection = Multiply(camera_->matView, camera_->matProjection);
 
 	const Vector3& playerPos = player_->GetWorldTransform().translation_;
+
+	// プレイヤーが別のマスに移動したときだけ、距離フィールドを作り直す
+	stage_->BuildFlowField(playerPos);
+
 	for (Enemy* enemy : enemies_) {
 		enemy->Update(playerPos, viewProjection, *stage_);
 	}
+
+		// 弾が当たった敵を倒して、アイテムを落とす
+	for (auto it = enemies_.begin(); it != enemies_.end();) {
+		Enemy* enemy = *it;
+
+		if (player_->HitBullet(enemy->GetPosition(), Enemy::kRadius)) {
+			SpawnItem(enemy->GetPosition()); // 倒した位置にアイテム
+			delete enemy;
+			it = enemies_.erase(it);
+		} else {
+			++it;
+		}
+	}
+
+	// 敵同士の押し合い
+	SeparateEnemies();
 
 	// 確認用:Iキーでプレイヤーの横にアイテムを出す
 	if (Input::GetInstance()->TriggerKey(DIK_I)) {
@@ -110,6 +151,7 @@ void GameScene::Update() {
 	}
 }
 
+//敵のスポーン
 void GameScene::SpawnEnemy(const Matrix4x4& viewProjection) {
 
 	const Vector3& playerPos = player_->GetWorldTransform().translation_;
@@ -125,11 +167,60 @@ void GameScene::SpawnEnemy(const Matrix4x4& viewProjection) {
 	enemies_.push_back(newEnemy);
 }
 
+//敵の重なり防止
+void GameScene::SeparateEnemies() {
+
+	const float minDist = Enemy::kRadius * 2.0f;
+
+	for (auto a = enemies_.begin(); a != enemies_.end(); ++a) {
+		auto b = a;
+		for (++b; b != enemies_.end(); ++b) {
+
+			Vector3 posA = (*a)->GetPosition();
+			Vector3 posB = (*b)->GetPosition();
+
+			float diffX = posB.x - posA.x;
+			float diffZ = posB.z - posA.z;
+			float distSq = diffX * diffX + diffZ * diffZ;
+
+			if (distSq >= minDist * minDist) {
+				continue; // 離れている
+			}
+
+			float dist = std::sqrt(distSq);
+			float nx, nz;
+			if (dist > 0.0001f) {
+				nx = diffX / dist;
+				nz = diffZ / dist;
+			} else {
+				// 完全に同じ位置のときは、適当な向きに離す
+				nx = 1.0f;
+				nz = 0.0f;
+			}
+
+			// めり込んだ分の半分ずつ、互いに反対向きへ押す
+			float push = (minDist - dist) * 0.5f;
+			posA.x -= nx * push;
+			posA.z -= nz * push;
+			posB.x += nx * push;
+			posB.z += nz * push;
+
+			// 壁の中へ押し込まないよう、壁との衝突も解決してから反映する
+			(*a)->SetPosition(stage_->ClampToMap(stage_->ResolveCollision(posA, Enemy::kRadius), Enemy::kRadius));
+			(*b)->SetPosition(stage_->ClampToMap(stage_->ResolveCollision(posB, Enemy::kRadius), Enemy::kRadius));
+		}
+	}
+
+	for (Enemy* enemy : enemies_) {
+		enemy->RefreshTransform();
+	}
+}
+
 std::optional<Vector3> GameScene::FindSpawnPosition(const Vector3& playerPosition, const Matrix4x4& viewProjection) {
 
 	constexpr float pi = 3.1415926535f;
-	constexpr float minRadius = 20.0f;
-	constexpr float maxRadius = 40.0f;
+	constexpr float minRadius = 18.0f;
+	constexpr float maxRadius = 35.0f;
 	constexpr int maxAttempts = 32;
 
 	std::uniform_real_distribution<float> angleDist(0.0f, 2.0f * pi);
@@ -142,7 +233,7 @@ std::optional<Vector3> GameScene::FindSpawnPosition(const Vector3& playerPositio
 		Vector3 position{playerPosition.x + std::cos(angle) * radius, playerPosition.y, playerPosition.z + std::sin(angle) * radius};
 
 		// 画面内かどうかを反転して、画面外の候補だけ採用する
-		if (!IsInsideScreen(position, viewProjection) && !stage_->IsWallAt(position)) {
+		if (!IsInsideScreen(position, viewProjection) && !stage_->IsWallAt(position) && stage_->IsInsideMap(position)) {
 			return position;
 		}
 	}

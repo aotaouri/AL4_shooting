@@ -1,6 +1,7 @@
 #include "Stage.h"
 #include "MyMath.h"
 #include <cmath>
+#include <queue>
 
 using namespace KamataEngine;
 
@@ -30,14 +31,14 @@ const char* kMapData[] = {
 };
 } // namespace
 
-void Stage::Initialize(Model* model, Camera* camera) {
+void Stage::Initialize(Model* model, Camera* camera, std::mt19937& randomEngine) {
 
 	model_ = model;
 	camera_ = camera;
 
-	for (const char* row : kMapData) {
-		map_.push_back(row);
-	}
+	// 固定マップの代わりに、ランダムなマップを作る
+	GenerateRandomMap(randomEngine);
+
 	height_ = static_cast<int>(map_.size());
 	width_ = static_cast<int>(map_[0].size());
 
@@ -59,12 +60,13 @@ void Stage::Initialize(Model* model, Camera* camera) {
 			UpdateWorldTransform(wt);
 		}
 	}
-}
 
-void Stage::Draw() {
-	for (WorldTransform& wt : wallTransforms_) {
-		model_->Draw(wt, *camera_);
-	}
+		// 巨大な床を1枚だけ敷く(cube.obj が 2x2x2 の前提)
+	bigFloorTransform_.Initialize();
+	bigFloorTransform_.translation_ = {0.0f, kFloorY - 0.1f, 0.0f};
+	bigFloorTransform_.scale_ = {kFloorHalfSize / 1.0f, 0.1f, kFloorHalfSize / 1.0f};
+	UpdateWorldTransform(bigFloorTransform_);
+
 }
 
 bool Stage::IsWall(int gridX, int gridZ) const {
@@ -104,10 +106,10 @@ bool Stage::HasLineOfSight(const Vector3& startPos, const Vector3& endPos) const
 	int stepX = (dx >= 0.0f) ? 1 : -1;
 	int stepZ = (dz >= 0.0f) ? 1 : -1;
 
-	// 1マス分の間隔 tDelta(0 除算の回避に大きな値を入れる)
-	constexpr float kInf = 1e30f;
-	float tDeltaX = (dx != 0.0f) ? std::abs(1.0f / dx) : kInf;
-	float tDeltaZ = (dz != 0.0f) ? std::abs(1.0f / dz) : kInf;
+		// 1マス分の間隔 tDelta(0 除算の回避に大きな値を入れる)
+	constexpr float kHuge = 1e30f;
+	float tDeltaX = (dx != 0.0f) ? std::abs(1.0f / dx) : kHuge;
+	float tDeltaZ = (dz != 0.0f) ? std::abs(1.0f / dz) : kHuge;
 
 	// 最初の境界までの t
 	float nextX = static_cast<float>(dx >= 0.0f ? gridX + 1 : gridX);
@@ -133,4 +135,201 @@ bool Stage::HasLineOfSight(const Vector3& startPos, const Vector3& endPos) const
 		}
 	}
 	return true; // 終点マスまで見通せた
+}
+
+Vector3 Stage::ResolveCollision(const Vector3& pos, float radius) const {
+
+	Vector3 result = pos;
+
+	// 円が重なりうるマスの範囲
+	int minX = static_cast<int>(std::floor((pos.x - radius) / kTileSize));
+	int maxX = static_cast<int>(std::floor((pos.x + radius) / kTileSize));
+	int minZ = static_cast<int>(std::floor((pos.z - radius) / kTileSize));
+	int maxZ = static_cast<int>(std::floor((pos.z + radius) / kTileSize));
+
+	for (int gz = minZ; gz <= maxZ; ++gz) {
+		for (int gx = minX; gx <= maxX; ++gx) {
+			if (!IsWall(gx, gz)) {
+				continue;
+			}
+
+			// このマスの範囲(ワールド座標)
+			float left = gx * kTileSize;
+			float right = (gx + 1) * kTileSize;
+			float bottom = gz * kTileSize;
+			float top = (gz + 1) * kTileSize;
+
+			// マス上で、円の中心に最も近い点
+			float nearestX = std::fmax(left, std::fmin(result.x, right));
+			float nearestZ = std::fmax(bottom, std::fmin(result.z, top));
+
+			float diffX = result.x - nearestX;
+			float diffZ = result.z - nearestZ;
+			float distSq = diffX * diffX + diffZ * diffZ;
+
+			if (distSq >= radius * radius) {
+				continue; // 重なっていない
+			}
+
+			if (distSq > 0.00001f) {
+				// 中心がマスの外側:最も近い点から離れる向きに、めり込んだ分だけ押し出す
+				float dist = std::sqrt(distSq);
+				float push = radius - dist;
+				result.x += diffX / dist * push;
+				result.z += diffZ / dist * push;
+			} else {
+				// 中心がマスの内側(速度が速すぎて入り込んだ場合など):最も近い辺から押し出す
+				float toLeft = result.x - left;
+				float toRight = right - result.x;
+				float toBottom = result.z - bottom;
+				float toTop = top - result.z;
+				float minDist = std::fmin(std::fmin(toLeft, toRight), std::fmin(toBottom, toTop));
+
+				if (minDist == toLeft) {
+					result.x = left - radius;
+				} else if (minDist == toRight) {
+					result.x = right + radius;
+				} else if (minDist == toBottom) {
+					result.z = bottom - radius;
+				} else {
+					result.z = top + radius;
+				}
+			}
+		}
+	}
+	return result;
+}
+
+Vector3 Stage::ClampToMap(const Vector3& pos, float radius) const {
+
+	float halfW = width_ * kTileSize / 2.0f - radius;
+	float halfH = height_ * kTileSize / 2.0f - radius;
+
+	Vector3 result = pos;
+	result.x = std::fmax(-halfW, std::fmin(result.x, halfW));
+	result.z = std::fmax(-halfH, std::fmin(result.z, halfH));
+	return result;
+}
+
+void Stage::GenerateRandomMap(std::mt19937& randomEngine) {
+
+	std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+	map_.clear();
+	for (int r = 0; r < kMapHeight; ++r) {
+		std::string row(kMapWidth, '.');
+
+		for (int c = 0; c < kMapWidth; ++c) {
+			// 原点(プレイヤーの開始位置)のマス。IsWall と同じ式で座標を対応させる
+			int gridX = c - kMapWidth / 2;
+			int gridZ = r - kMapHeight / 2;
+
+			// スタート地点の周囲は壁を置かない
+			if (std::abs(gridX) <= kSafeRadius && std::abs(gridZ) <= kSafeRadius) {
+				continue;
+			}
+
+			if (dist(randomEngine) < kWallRate) {
+				row[c] = '#';
+			}
+		}
+		map_.push_back(row);
+	}
+}
+
+bool Stage::IsInsideMap(const Vector3& pos) const {
+	float halfW = width_ * kTileSize / 2.0f;
+	float halfH = height_ * kTileSize / 2.0f;
+	return pos.x >= -halfW && pos.x < halfW && pos.z >= -halfH && pos.z < halfH;
+}
+
+void Stage::BuildFlowField(const Vector3& playerPos) {
+
+	// プレイヤーのマス(配列の添字)
+	int startCol = static_cast<int>(std::floor(playerPos.x / kTileSize)) + width_ / 2;
+	int startRow = static_cast<int>(std::floor(playerPos.z / kTileSize)) + height_ / 2;
+
+	// マップの外にいるときは更新しない
+	if (startCol < 0 || startCol >= width_ || startRow < 0 || startRow >= height_) {
+		return;
+	}
+	// 同じマスにいる間は再計算しない
+	if (startCol == lastFlowCol_ && startRow == lastFlowRow_) {
+		return;
+	}
+	lastFlowCol_ = startCol;
+	lastFlowRow_ = startRow;
+
+	// 全マスを未到達で初期化してから、始点を 0 にする
+	dist_.assign(width_ * height_, kInf);
+	std::queue<std::pair<int, int>> q;
+	dist_[startRow * width_ + startCol] = 0;
+	q.push({startCol, startRow});
+
+	constexpr int dx[4] = {1, -1, 0, 0};
+	constexpr int dz[4] = {0, 0, 1, -1};
+
+	while (!q.empty()) {
+		auto [cx, cz] = q.front();
+		q.pop();
+		for (int i = 0; i < 4; ++i) {
+			int nx = cx + dx[i];
+			int nz = cz + dz[i];
+			if (nx < 0 || nx >= width_ || nz < 0 || nz >= height_) {
+				continue;
+			}
+			if (map_[nz][nx] == '#') {
+				continue;
+			}
+			if (dist_[nz * width_ + nx] == kInf) {
+				dist_[nz * width_ + nx] = dist_[cz * width_ + cx] + 1;
+				q.push({nx, nz});
+			}
+		}
+	}
+}
+
+bool Stage::GetFlowDirection(const Vector3& pos, Vector3* outDir) const {
+
+	if (dist_.empty()) {
+		return false;
+	}
+
+	int x = static_cast<int>(std::floor(pos.x / kTileSize)) + width_ / 2;
+	int z = static_cast<int>(std::floor(pos.z / kTileSize)) + height_ / 2;
+	if (x < 0 || x >= width_ || z < 0 || z >= height_) {
+		return false;
+	}
+
+	int c = dist_[z * width_ + x];
+	if (c == kInf) {
+		return false; // 壁の中、またはプレイヤーに到達できないマス
+	}
+
+	// 隣のマスの距離(壁・未到達・範囲外は自分の距離 c として扱う)
+	auto at = [&](int ax, int az) {
+		if (ax < 0 || ax >= width_ || az < 0 || az >= height_) {
+			return c;
+		}
+		int v = dist_[az * width_ + ax];
+		return (v == kInf) ? c : v;
+	};
+
+	// 距離が減る向き(左右・前後の差)
+	float dirX = static_cast<float>(at(x - 1, z) - at(x + 1, z));
+	float dirZ = static_cast<float>(at(x, z - 1) - at(x, z + 1));
+
+	float len = std::sqrt(dirX * dirX + dirZ * dirZ);
+	if (len < 0.0001f) {
+		return false;
+	}
+	*outDir = {dirX / len, 0.0f, dirZ / len};
+	return true;
+}
+
+void Stage::Draw() {
+	model_->Draw(bigFloorTransform_, *camera_);
+	for (WorldTransform& wt : wallTransforms_) {
+		model_->Draw(wt, *camera_);
+	}
 }

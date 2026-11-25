@@ -18,3 +18,4 @@ bool IsInsideScreen(const KamataEngine::Vector3& worldPos, const KamataEngine::M
 // ワールド座標 → 画面座標(左上が(0,0)のピクセル座標)
 KamataEngine::Vector2 WorldToScreen(const KamataEngine::Vector3& worldPos, const KamataEngine::Matrix4x4& viewProjection, float screenWidth, float screenHeight);
 
+bool ScreenToGround(const KamataEngine::Vector2& screenPos, const KamataEngine::Matrix4x4& view, const KamataEngine::Matrix4x4& projection, float screenWidth, float screenHeight, float groundY,KamataEngine::Vector3* out);

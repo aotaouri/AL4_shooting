@@ -6,6 +6,8 @@ using namespace KamataEngine;
 
 class PlayerBullet;
 
+class Stage;
+
 class Player {
 
 public:
@@ -22,6 +24,21 @@ public:
 
 	const Vector3& GetVelocity() const { return velocity_; }
 
+	// 壁との衝突で押し戻された座標を反映する
+	void SetPosition(const Vector3& position) { worldTransform_.translation_ = position; }
+
+	void RefreshTransform();
+
+		// 壁に触れた弾を消す
+	void RemoveBulletsHitWall(const Stage& stage);
+
+	void LookAt(const Vector3& target);
+
+	// 弾と敵の当たり判定用:敵の座標と半径を渡して、当たった弾を消す。当たったら true
+	bool HitBullet(const Vector3& enemyPos, float enemyRadius);
+
+	// 当たり判定の半径
+	static inline const float kRadius = 0.8f;
 
 private:
 
